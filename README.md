@@ -116,8 +116,30 @@ python -m guardian scan --path . --out reports --fail-on HIGH
 python -m guardian scan --path . --out reports --fail-on CRITICAL
 ```
 
-## Restricciones Del MVP 0.1.1
+## AI Phase (Local)
+
+La fase IA no escanea codigo. Solo explica `scan.json` ya generado por el analisis deterministico.
+
+Requisitos:
+- Ollama instalado localmente
+- 8-16 GB RAM recomendados
+
+Pasos:
+
+```bash
+ollama pull llama3.1:8b
+python -m guardian ai --scan reports/scan.json --out reports/ai.md
+```
+
+Aclaraciones:
+- La IA no vuelve a escanear el repositorio.
+- La IA no sube datos a la nube.
+- La IA usa exclusivamente `scan.json` como fuente de verdad.
+- Si Ollama no esta disponible, el comando `ai` falla con exit code `3` y muestra instrucciones de instalacion/modelo.
+
+## Restricciones Del MVP 0.2.1
 
 - 100% local-first
 - Python estandar
 - dependencias runtime minimas
+

@@ -3,4 +3,6 @@ __pycache__/
 *.pyc
 reports/scan.json
 reports/scan.md
+reports/ai.md
+reports/ai.json
 !reports/.gitkeep
