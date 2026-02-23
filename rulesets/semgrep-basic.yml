@@ -1,0 +1,21 @@
+rules:
+  - id: python-dangerous-eval
+    languages: [python]
+    severity: ERROR
+    message: Evita eval con entrada no confiable.
+    patterns:
+      - pattern: eval($X)
+
+  - id: python-shell-true
+    languages: [python]
+    severity: WARNING
+    message: subprocess con shell=True puede ser riesgoso.
+    patterns:
+      - pattern: subprocess.$F(..., shell=True, ...)
+
+  - id: js-dangerous-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Evita eval en JavaScript/TypeScript.
+    patterns:
+      - pattern: eval($X)

@@ -1,0 +1,14 @@
+version: 0.1
+rules:
+  - id: SEC-001
+    pattern: BEGIN PRIVATE KEY
+    severity: critical
+  - id: SEC-002
+    pattern: AKIA[0-9A-Z]{16}
+    severity: critical
+  - id: SEC-003
+    pattern: ghp_|github_pat_
+    severity: critical
+  - id: CI-003
+    pattern: curl.*\|(bash|sh)
+    severity: critical

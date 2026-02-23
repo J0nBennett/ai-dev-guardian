@@ -1,0 +1,8 @@
+version: 0.1
+rules:
+  - id: MET-001
+    description: Proyecto sin carpeta de tests detectada
+    severity: medium
+  - id: DEP-001
+    description: Falta lockfile para un manifiesto detectado
+    severity: medium
