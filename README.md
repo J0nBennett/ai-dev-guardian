@@ -1,145 +1,124 @@
 # ai-dev-guardian
 
-`ai-dev-guardian` es un scanner local-first para analizar repositorios de codigo y detectar riesgos de calidad y seguridad de forma reproducible, sin usar cloud ni LLMs.
+`ai-dev-guardian` es una herramienta local-first para analizar repositorios y explicar riesgos de forma accionable.
 
 ## Quickstart
 
 ```bash
 python -m guardian --version
 python -m guardian scan --path . --out reports
+python -m guardian ai --scan reports/scan.json --out reports/ai.md
 python -m unittest -q
 ```
 
-## Quick demo (CI-friendly)
+## Principios
 
-```bash
-python -m guardian scan --path . --out reports --fail-on HIGH
+- 100% local-first
+- Sin cloud ni APIs externas
+- Sin ejecutar codigo del repo analizado
+- `scan.json` es la fuente de verdad para la fase IA
+
+## Fase Scan
+
+`guardian scan` realiza analisis deterministico y genera:
+- `reports/scan.json`
+- `reports/scan.md`
+
+Incluye:
+- metricas de estructura
+- hallazgos de seguridad
+- CI status
+- integracion opcional semgrep local
+- **project_profile**
+
+### Project Profile
+
+`scan.json` ahora incluye:
+
+```json
+"project_profile": {
+  "name": "generic|web|backend|mobile|infra|library",
+  "signals": ["package.json", "AGENTS.md"]
+}
 ```
 
-Interpretacion de exit codes:
-- `0`: scan exitoso y no supera el umbral de `--fail-on`
-- `1`: error interno inesperado
-- `2`: se alcanzo o supero el umbral de severidad configurado
+Heuristicas best-effort:
+- `web`: frameworks web comunes en `package.json`
+- `backend`: frameworks backend node/python
+- `mobile`: `pubspec.yaml`, `android/`, `ios/`
+- `infra`: terraform/k8s/docker-heavy
+- `library`: `src/` + `docs/` sin entrypoints claros
+- default: `generic`
 
-`--fail-on NONE` deshabilita el umbral y siempre retorna `0` aunque existan hallazgos CRITICAL.
+Tambien detecta senales de repos asistidos por IA/agentes (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.windsurfrules`, etc.).
 
-## Que Hace
+## Fase AI (Generalista)
 
-- Recorre archivos de forma segura (sin ejecutar codigo del repositorio objetivo).
-- Calcula metricas estructurales:
-  - total de archivos
-  - conteo por extension
-  - LOC estimadas
-  - deteccion de carpetas de tests
-  - deteccion de CI (`.github/workflows/*`, `.gitlab-ci.yml`)
-- Detecta brechas potenciales:
-  - secrets y credenciales hardcodeadas
-  - archivos sensibles versionados
-  - practicas riesgosas en CI/CD
-  - checks basicos de dependencias (lockfiles y versiones no fijadas)
-- Integracion opcional local de semgrep con reglas offline `rulesets/semgrep-basic.yml`.
-- Genera reportes en JSON y Markdown.
+`guardian ai` **no escanea codigo**. Solo interpreta `scan.json`.
 
-## Que NO Hace
+```bash
+python -m guardian ai --scan reports/scan.json --out reports/ai.md
+```
 
-- No explota vulnerabilidades.
-- No ejecuta codigo del repositorio analizado.
-- No envia codigo a la nube.
-- No usa APIs externas.
+Defaults:
+- `--provider ollama`
+- `--model llama3.1:8b`
+- `--max-findings 25`
 
-## Estructura De Reportes
+Comportamiento:
+- Prompt generalista para cualquier web/app/proyecto
+- Terminologia orientada a hallazgos/riesgos
+- Agrupacion de hallazgos para evitar repeticion
+- Checklist obligatorio "repos generados por IA/agentes"
 
-- `reports/scan.json`
-  - `tool` (`name`, `version`)
-  - `schema_version`
-  - `project_summary`
-  - `metrics`
-  - `security_summary`
-  - `security_findings`
-  - `integrations`
-  - `ci_status`
-  - `warnings`
-- `reports/scan.md`
-  - resumen ejecutivo
-  - CI status (`fail_on`, `max_severity`, `expected_exit_code`)
-  - resumen de semgrep
-  - tabla de hallazgos
+## Agrupacion De Hallazgos (AI)
 
-## Severidad Y Confidence
+Antes de pedir explicacion al modelo, los findings se agrupan por:
+- `rule_id + severity`
 
-- Severidad: `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`
-- Confidence: `LOW`, `MEDIUM`, `HIGH`
+Cada grupo incluye:
+- `rule_id`
+- `severity`
+- `count`
+- hasta 5 `examples` (paths)
+- acciones sugeridas
 
-Cada hallazgo incluye: `id`, severidad, confidence, archivo, linea (si aplica), evidencia sanitizada y recomendacion.
+Ejemplo: 15 findings `SEC-017` -> 1 grupo con `count=15`.
 
-## Seguridad De Evidencia
+## ai.json Estructurado
 
-El reporte aplica masking para no exponer secretos completos:
-- tokens: prefijo + `****` + ultimos 4 caracteres (ej: `ghp_****1a2b`)
-- private keys: solo header `BEGIN PRIVATE KEY`
-- aplica tanto a hallazgos nativos como a hallazgos de semgrep
+Ademas de `ai.md`, se genera `ai.json` con campos para automatizacion:
+
+- `risk_level`
+- `grouped_findings`
+- `priorities` (`P0`, `P1`, `P2`)
+- `quick_wins`
+- `manual_checks`
+- `ci_hardening`
 
 ## Integracion Opcional De Semgrep
 
-Semgrep es opcional y local:
+Semgrep sigue siendo opcional y local:
 
 ```bash
 python -m guardian scan --path . --out reports --with-semgrep
 ```
 
-Comportamiento:
-- si semgrep no esta instalado: agrega warning y continua
-- si esta instalado: ejecuta reglas offline de `rulesets/semgrep-basic.yml`
-
-Mapping de severidad semgrep a guardian:
-- `ERROR` -> `HIGH` (o `CRITICAL` si la regla es de seguridad directa)
-- `WARNING` -> `MEDIUM`
-- `INFO` -> `LOW`
-- sin severidad -> `MEDIUM`
-
-Trazabilidad:
-- los hallazgos semgrep usan `id` tipo `SG-<rule_id_original>`
-- ademas incluyen `source_rule_id` en `scan.json`
+Si semgrep no esta disponible, el scan continua con warning.
 
 ## Modo CI Con Fail-On
-
-`--fail-on` controla cuando el comando debe fallar por severidad.
-
-- `NONE` (default): nunca falla por findings
-- `LOW|MEDIUM|HIGH|CRITICAL`: retorna exit code `2` si existe al menos un hallazgo con severidad mayor o igual al umbral
-
-Ejemplos:
 
 ```bash
 python -m guardian scan --path . --out reports --fail-on NONE
 python -m guardian scan --path . --out reports --fail-on HIGH
-python -m guardian scan --path . --out reports --fail-on CRITICAL
 ```
 
-## AI Phase (Local)
+Exit codes scan:
+- `0`: OK segun umbral
+- `1`: error interno
+- `2`: umbral alcanzado
 
-La fase IA no escanea codigo. Solo explica `scan.json` ya generado por el analisis deterministico.
-
-Requisitos:
-- Ollama instalado localmente
-- 8-16 GB RAM recomendados
-
-Pasos:
-
-```bash
-ollama pull llama3.1:8b
-python -m guardian ai --scan reports/scan.json --out reports/ai.md
-```
-
-Aclaraciones:
-- La IA no vuelve a escanear el repositorio.
-- La IA no sube datos a la nube.
-- La IA usa exclusivamente `scan.json` como fuente de verdad.
-- Si Ollama no esta disponible, el comando `ai` falla con exit code `3` y muestra instrucciones de instalacion/modelo.
-
-## Restricciones Del MVP 0.2.1
-
-- 100% local-first
-- Python estandar
-- dependencias runtime minimas
-
+Exit codes ai:
+- `0`: exito
+- `1`: error interno/entrada invalida
+- `3`: proveedor IA no disponible (Ollama/modelo)

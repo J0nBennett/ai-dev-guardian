@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .ai.formatter import build_ai_json_payload, render_ai_markdown, write_ai_outputs
+from .ai.formatter import build_ai_json_payload, group_findings, render_ai_markdown, write_ai_outputs
 from .ai.ollama_provider import OllamaProvider
 from .ai.prompts import build_ai_prompt
 from .ai.provider import AIProviderError, AIProviderRequest
 from .ai.redaction import sanitize_text
 from .scan.metrics import collect_metrics
+from .scan.profile import detect_project_profile
 from .scan.reporter import write_reports
 from .scan.rules import severity_gte
 from .scan.rules_engine import run_security_scan
@@ -71,6 +72,7 @@ def run_scan(path: Path, out: Path, fail_on: str = "NONE", with_semgrep: bool = 
     out_dir = out.resolve()
 
     metrics = collect_metrics(project_path)
+    profile = detect_project_profile(project_path)
     result = run_security_scan(project_path, metrics=metrics, with_semgrep=with_semgrep)
 
     exit_code = evaluate_exit_code([finding.severity for finding in result.findings], fail_on)
@@ -81,6 +83,7 @@ def run_scan(path: Path, out: Path, fail_on: str = "NONE", with_semgrep: bool = 
         scan_result=result,
         fail_on=fail_on,
         expected_exit_code=exit_code,
+        project_profile=profile,
     )
     return exit_code
 
@@ -136,14 +139,27 @@ def run_ai(
         raise ValueError("--max-findings debe ser mayor a 0")
 
     scan_payload = _load_scan_json(scan.resolve())
-    prompt = build_ai_prompt(scan_payload, max_findings=max_findings)
+    selected_findings = list(scan_payload.get("security_findings", []))[:max_findings]
+    grouped = group_findings(selected_findings)
+
+    prompt = build_ai_prompt(scan_payload, max_findings=max_findings, grouped_findings=grouped)
 
     ai_provider = _select_provider(provider)
     response = ai_provider.generate(AIProviderRequest(model=model, prompt=prompt))
 
     sanitized = sanitize_text(response.text)
-    markdown = render_ai_markdown(model=model, provider=provider, analysis_text=sanitized)
-    ai_json = build_ai_json_payload(provider=provider, model=model, analysis_text=sanitized)
+    markdown = render_ai_markdown(
+        model=model,
+        provider=provider,
+        analysis_text=sanitized,
+        project_profile=scan_payload.get("project_profile", {"name": "generic", "signals": []}),
+    )
+    ai_json = build_ai_json_payload(
+        provider=provider,
+        model=model,
+        analysis_text=sanitized,
+        grouped_findings=grouped,
+    )
     write_ai_outputs(out.resolve(), markdown, ai_json)
 
     return 0

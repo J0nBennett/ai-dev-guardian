@@ -60,6 +60,32 @@ class ScanSmokeTest(unittest.TestCase):
             self.assertIn("metrics", payload)
             self.assertIn("security_findings", payload)
 
+    def test_scan_includes_project_profile_generic_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            out_dir = Path(tmp) / "reports"
+            root.mkdir()
+            (root / "README.md").write_text("demo\n", encoding="utf-8")
+
+            payload, _ = self._run_scan(root, out_dir)
+            self.assertIn("project_profile", payload)
+            self.assertEqual(payload["project_profile"]["name"], "generic")
+            self.assertIsInstance(payload["project_profile"]["signals"], list)
+
+    def test_profile_package_json_not_generic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            out_dir = Path(tmp) / "reports"
+            root.mkdir()
+            (root / "package.json").write_text(
+                json.dumps({"name": "x", "dependencies": {"react": "18.0.0"}}),
+                encoding="utf-8",
+            )
+
+            payload, _ = self._run_scan(root, out_dir)
+            self.assertIn("project_profile", payload)
+            self.assertNotEqual(payload["project_profile"]["name"], "generic")
+
     def test_evidence_masking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

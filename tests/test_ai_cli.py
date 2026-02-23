@@ -21,19 +21,26 @@ class _CapturingProvider:
         return AIProviderResponse(
             text=(
                 "## Resumen ejecutivo\n"
-                "Proyecto con riesgo medio.\n\n"
+                "Proyecto con riesgos moderados.\n\n"
+                "## Hardening de CI\n"
+                "- Minimizar permissions en workflows\n"
+                "- Pinar actions por SHA\n\n"
                 "## Quick wins\n"
                 "- Rotar credenciales expuestas\n"
+                "- Revisar archivos SQL con patrones sensibles\n\n"
+                "## Que revisar manualmente\n"
+                "- Revisar dumps SQL con datos reales\n"
             )
         )
 
 
 class AICliTests(unittest.TestCase):
-    def _build_scan_payload(self) -> dict:
+    def _build_scan_payload(self, profile_name: str = "generic") -> dict:
         return {
-            "tool": {"name": "ai-dev-guardian", "version": "0.2.1"},
+            "tool": {"name": "ai-dev-guardian", "version": "0.2.2"},
             "schema_version": "1.0",
             "project_summary": {"path": "sample", "score": "WARN"},
+            "project_profile": {"name": profile_name, "signals": ["package.json"] if profile_name == "web" else []},
             "security_summary": {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 1, "LOW": 0},
             "ci_status": {"fail_on": "NONE", "max_severity": "HIGH", "expected_exit_code": 0},
             "warnings": [],
@@ -99,7 +106,7 @@ class AICliTests(unittest.TestCase):
             content = out_path.read_text(encoding="utf-8")
             self.assertIn("# AI Analysis Report", content)
             self.assertIn("Provider: `ollama`", content)
-            self.assertIn("--fail-on HIGH", content)
+            self.assertIn("Checklist para repos generados por IA / agentes", content)
 
             ai_json = out_path.with_suffix(".json")
             self.assertTrue(ai_json.exists())
@@ -107,7 +114,56 @@ class AICliTests(unittest.TestCase):
             self.assertEqual(payload["provider"], "ollama")
             self.assertEqual(payload["model"], "llama3.1:8b")
 
-    def test_prompt_includes_required_quality_instructions(self) -> None:
+    def test_grouped_findings_aggregation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scan_path = tmp_path / "scan.json"
+            out_path = tmp_path / "ai.md"
+
+            payload = self._build_scan_payload()
+            payload["security_findings"] = [
+                {
+                    "id": "SEC-017",
+                    "severity": "MEDIUM",
+                    "confidence": "MEDIUM",
+                    "file": f"db/sql_{i}.sql",
+                    "line": None,
+                    "evidence": f"db/sql_{i}.sql",
+                    "recommendation": "Revisar",
+                }
+                for i in range(15)
+            ]
+            scan_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            provider = _CapturingProvider()
+            with patch("guardian.cli._select_provider", return_value=provider):
+                run_ai(scan=scan_path, out=out_path, provider="ollama", model="llama3.1:8b", max_findings=25)
+
+            ai_payload = json.loads(out_path.with_suffix(".json").read_text(encoding="utf-8"))
+            self.assertIn("grouped_findings", ai_payload)
+            self.assertEqual(len(ai_payload["grouped_findings"]), 1)
+            group = ai_payload["grouped_findings"][0]
+            self.assertEqual(group["rule_id"], "SEC-017")
+            self.assertEqual(group["count"], 15)
+            self.assertLessEqual(len(group["examples"]), 5)
+
+    def test_prompt_no_qa_apex_mentions_for_generic_and_web(self) -> None:
+        for profile in ("generic", "web"):
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                scan_path = tmp_path / "scan.json"
+                out_path = tmp_path / "ai.md"
+                scan_path.write_text(json.dumps(self._build_scan_payload(profile_name=profile)), encoding="utf-8")
+
+                provider = _CapturingProvider()
+                with patch("guardian.cli._select_provider", return_value=provider):
+                    run_ai(scan=scan_path, out=out_path, provider="ollama", model="llama3.1:8b", max_findings=25)
+
+                prompt = provider.last_request.prompt.lower()
+                self.assertNotIn("qa", prompt)
+                self.assertNotIn("apex", prompt)
+
+    def test_ai_json_includes_structured_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             scan_path = tmp_path / "scan.json"
@@ -118,16 +174,13 @@ class AICliTests(unittest.TestCase):
             with patch("guardian.cli._select_provider", return_value=provider):
                 run_ai(scan=scan_path, out=out_path, provider="ollama", model="llama3.1:8b", max_findings=25)
 
-            self.assertIsNotNone(provider.last_request)
-            prompt = provider.last_request.prompt
-            self.assertIn("Usa 'hallazgos' o 'riesgos' por defecto", prompt)
-            self.assertIn("SEC-017", prompt)
-            self.assertIn("APEX/QA", prompt)
-            self.assertIn("password=, token, api_key, bearer, AKIA, ghp_, BEGIN PRIVATE KEY", prompt)
-            self.assertIn("Aunque no haya hallazgos CI", prompt)
-            self.assertIn("Quick wins (max 5, concretos y no repetidos)", prompt)
+            ai_payload = json.loads(out_path.with_suffix(".json").read_text(encoding="utf-8"))
+            self.assertIn("grouped_findings", ai_payload)
+            self.assertIn("quick_wins", ai_payload)
+            self.assertIn("priorities", ai_payload)
+            self.assertIn("ci_hardening", ai_payload)
+            self.assertIn("manual_checks", ai_payload)
 
 
 if __name__ == "__main__":
     unittest.main()
-

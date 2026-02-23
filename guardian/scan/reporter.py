@@ -25,6 +25,7 @@ def _json_payload(
     scan_result: ScanResult,
     fail_on: str,
     expected_exit_code: int,
+    project_profile: dict[str, object] | None,
 ) -> dict:
     summary = severity_counter(scan_result.findings)
     findings_payload: list[dict[str, object]] = []
@@ -52,6 +53,7 @@ def _json_payload(
             "path": str(project_path),
             "score": _score(scan_result),
         },
+        "project_profile": project_profile or {"name": "generic", "signals": []},
         "metrics": {
             "total_files": metrics.total_files,
             "files_by_extension": metrics.files_by_extension,
@@ -79,11 +81,13 @@ def _markdown_report(
     scan_result: ScanResult,
     fail_on: str,
     expected_exit_code: int,
+    project_profile: dict[str, object] | None,
 ) -> str:
     summary = severity_counter(scan_result.findings)
     score = _score(scan_result)
     max_found = max_severity(scan_result.findings)
     semgrep_info = scan_result.integrations.get("semgrep", {})
+    profile = project_profile or {"name": "generic", "signals": []}
 
     lines: list[str] = []
     lines.append("# Guardian Scan Report")
@@ -94,6 +98,10 @@ def _markdown_report(
     lines.append(f"- Score: **{score}**")
     lines.append(f"- Archivos analizados: **{metrics.total_files}**")
     lines.append(f"- LOC estimadas: **{metrics.estimated_loc}**")
+    lines.append("")
+    lines.append("## Project Profile")
+    lines.append(f"- name: `{profile.get('name', 'generic')}`")
+    lines.append(f"- signals: {profile.get('signals', [])}")
     lines.append("")
     lines.append("## CI Status")
     lines.append(f"- fail_on: `{fail_on}`")
@@ -145,14 +153,15 @@ def write_reports(
     scan_result: ScanResult,
     fail_on: str,
     expected_exit_code: int,
+    project_profile: dict[str, object] | None = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    payload = _json_payload(path, metrics, scan_result, fail_on, expected_exit_code)
+    payload = _json_payload(path, metrics, scan_result, fail_on, expected_exit_code, project_profile)
     (out_dir / "scan.json").write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
-    markdown = _markdown_report(path, metrics, scan_result, fail_on, expected_exit_code)
+    markdown = _markdown_report(path, metrics, scan_result, fail_on, expected_exit_code, project_profile)
     (out_dir / "scan.md").write_text(markdown, encoding="utf-8")
